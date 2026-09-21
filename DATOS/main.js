@@ -53,10 +53,13 @@
   gradient("linearGradient", "grass", [[0, "#050f07"], [1, "#1f5a22"]], UP);
   gradient("radialGradient", "aura", [[0, "#ffd24d", 0.22], [0.6, "#ffb300", 0.06], [1, "#ffb300", 0]], {});
 
+  // El ramo baila en dos grupos (detrás y delante del pasto) con la misma transformación.
   const layer = {};
-  for (const name of ["aura", "paperBack", "greens", "stems", "leaves", "heads", "grass", "paperFront", "ribbon"]) {
-    layer[name] = el("g", {}, svg);
-  }
+  const danceBack = el("g", {}, svg);
+  for (const name of ["aura", "paperBack", "greens", "stems", "leaves", "heads"]) layer[name] = el("g", {}, danceBack);
+  layer.grass = el("g", {}, svg);
+  const danceFront = el("g", {}, svg);
+  for (const name of ["paperFront", "ribbon"]) layer[name] = el("g", {}, danceFront);
 
   /* ---------------- Piezas ---------------- */
 
@@ -247,6 +250,8 @@
     const lean = rand(-35, 35);
     const f = {
       ...p,
+      i,
+      spin: rand(0, 360),
       garden: [
         [p.gx, 1100],
         [p.gx + rand(-25, 25), lerp(1100, p.gy, 0.35)],
@@ -275,7 +280,8 @@
       { u: 0.7, side: -1 },
     ].map((o) => ({ ...o, node: buildLeaf(layer.leaves, p.type === "sun" ? 1.15 : 0.85, o.side < 0) }));
     f.head = el("g", { transform: "scale(0)" }, layer.heads);
-    f.petals = builders[p.type](f.head);
+    f.inner = el("g", {}, f.head);
+    f.petals = builders[p.type](f.inner);
     return f;
   });
 
@@ -392,13 +398,17 @@
 
   const angleDeg = ([dx, dy]) => (Math.atan2(dy, dx) * 180) / Math.PI;
 
-  function updateFlower(f, t) {
+  function updateFlower(f, t, dt) {
     const gt = easeInOutCubic(clamp01((t - f.gatherAt) / 2.4));
     const P = f.garden.map((g, k) => [lerp(g[0], f.bouquet[k][0], gt), lerp(g[1], f.bouquet[k][1], gt)]);
     const amp = lerp(7, 2.5, gt);
-    const sway = Math.sin(t * 1.2 + f.phase) * amp;
+    const R = rhythm.amount;
+    // Ola que recorre el ramo de flor en flor + rebote alterno: pares en un golpe, impares en el siguiente.
+    const wave = Math.cos(rhythm.phase + f.i * 0.55);
+    const pulse = rhythm.beat * (rhythm.count % 2 === f.i % 2 ? 1 : 0.35);
+    const sway = Math.sin(t * 1.2 + f.phase) * amp + wave * 7 * R;
     P[3][0] += sway;
-    P[3][1] += Math.cos(t * 0.9 + f.phase) * amp * 0.3;
+    P[3][1] += Math.cos(t * 0.9 + f.phase) * amp * 0.3 - 10 * pulse * R;
     P[2][0] += sway * 0.55;
 
     const d = `M${f1(P[0][0])} ${f1(P[0][1])}C${f1(P[1][0])} ${f1(P[1][1])} ${f1(P[2][0])} ${f1(P[2][1])} ${f1(P[3][0])} ${f1(P[3][1])}`;
@@ -420,9 +430,16 @@
       lf.node.setAttribute("transform", `translate(${f1(x)} ${f1(y)}) rotate(${f1(rot)}) scale(${s.toFixed(3)})`);
     }
 
-    const hs = easeOutBack(clamp01((t - f.bloomAt) / 1.1));
-    const tilt = (angleDeg(tangent(P, 1)) + 90) * 0.35;
+    const hs = easeOutBack(clamp01((t - f.bloomAt) / 1.1)) * (1 + 0.08 * pulse * R);
+    const tilt = (angleDeg(tangent(P, 1)) + 90) * 0.35 + wave * 4 * R;
     f.head.setAttribute("transform", `translate(${f1(P[3][0])} ${f1(P[3][1])}) rotate(${f1(tilt)}) scale(${(hs * f.s).toFixed(3)})`);
+
+    // Girasoles giran despacio con los medios, margaritas con los agudos, rosas se mecen de lado.
+    let turn;
+    if (f.type === "sun") turn = f.spin += dt * (4 + 45 * rhythm.mid * R);
+    else if (f.type === "daisy") turn = f.spin += dt * (10 + 90 * rhythm.high * R) * (f.i % 2 ? 1 : -1);
+    else turn = Math.sin(rhythm.phase) * 7 * R;
+    f.inner.setAttribute("transform", `rotate(${f1(turn % 360)})`);
 
     if (!f.bloomed) {
       let done = true;
@@ -443,16 +460,37 @@
       g.setAttribute("opacity", pp.toFixed(3));
       g.setAttribute("transform", shift);
     }
+    const R = rhythm.amount;
+    const sway = Math.cos(rhythm.phase);
+
+    // Todo el ramo se balancea de lado a lado en cada golpe y "respira" con los graves.
+    const rot = sway * 2.4 * R + Math.sin(t * 0.8) * 0.5;
+    const sc = 1 + (0.022 * rhythm.beat + 0.012 * rhythm.bass) * R;
+    const bob = -7 * rhythm.beat * R;
+    const dance = `translate(500 1060) rotate(${rot.toFixed(2)}) scale(${sc.toFixed(4)}) translate(-500 ${f1(-1060 + bob)})`;
+    danceBack.setAttribute("transform", dance);
+    danceFront.setAttribute("transform", dance);
+
     const rb = easeOutBack(clamp01((t - 10.3) / 0.9));
     layer.ribbon.setAttribute("opacity", rb > 0 ? 1 : 0);
-    layer.ribbon.setAttribute("transform", `translate(500 934) scale(${rb.toFixed(3)}) translate(-500 -934)`);
+    layer.ribbon.setAttribute(
+      "transform",
+      `translate(500 934) rotate(${(-sway * 5 * R).toFixed(2)}) scale(${(rb * (1 + 0.06 * rhythm.beat * R)).toFixed(3)}) translate(-500 -934)`
+    );
 
-    aura.setAttribute("opacity", easeOutCubic(clamp01((t - 7.6) / 2.5)).toFixed(3));
+    const auraBase = easeOutCubic(clamp01((t - 7.6) / 2.5));
+    aura.setAttribute("opacity", (auraBase * (0.7 + (0.5 * rhythm.bass + 0.4 * rhythm.beat) * R)).toFixed(3));
+    aura.setAttribute("r", f1(420 * (1 + 0.07 * rhythm.beat * R)));
+
     for (const g of extras) {
       const s = easeOutBack(clamp01((t - g.at) / 0.9));
-      g.node.setAttribute("transform", `translate(${f1(g.x)} ${f1(g.y)}) rotate(${f1(g.rot + Math.sin(t * 0.8 + g.x) * 2)}) scale(${s.toFixed(3)})`);
+      const flutter = Math.sin(t * 0.8 + g.x) * 2 + (Math.cos(rhythm.phase + g.x * 0.02) * 6 + rhythm.high * 8) * R;
+      g.node.setAttribute("transform", `translate(${f1(g.x)} ${f1(g.y)}) rotate(${f1(g.rot + flutter)}) scale(${s.toFixed(3)})`);
     }
-    for (const s of sprigs) s.node.setAttribute("opacity", clamp01((t - s.at) / 1).toFixed(3));
+    sprigs.forEach((s, k) => {
+      const twinkle = 1 - 0.35 * R * rhythm.high * (0.5 + 0.5 * Math.sin(t * 7 + k * 1.7));
+      s.node.setAttribute("opacity", (clamp01((t - s.at) / 1) * twinkle).toFixed(3));
+    });
   }
 
   /* ---------------- Cielo: estrellas, luciérnagas, pétalos, corazones ---------------- */
@@ -492,6 +530,7 @@
   const spawnHeart = (h = {}, initial) =>
     Object.assign(h, { x: rand(0, W), y: H + (initial ? rand(0, H) : 20), vy: rand(20, 45), s: rand(8, 16), ph: rand(0, 6.28) });
   const hearts = Array.from({ length: 12 }, () => spawnHeart({}, true));
+  const sparkles = [];
 
   function heartPath(x, y, s) {
     ctx.beginPath();
@@ -514,14 +553,60 @@
       ctx.fill();
     }
 
+    const R = rhythm.amount;
     ctx.globalCompositeOperation = "lighter";
     for (const f of flies) {
       f.a += Math.sin(t * 0.7 + f.p) * dt;
-      f.x = (f.x + Math.cos(f.a) * f.v * dt + 1) % 1;
+      f.x = (f.x + Math.cos(f.a) * f.v * dt * (1 + rhythm.beat * R * 2) + 1) % 1;
       f.y += Math.sin(f.a) * f.v * dt;
       if (f.y < 0.15 || f.y > 0.98) f.a = -f.a;
-      ctx.globalAlpha = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * 2.2 + f.p));
-      ctx.drawImage(glow, f.x * W - f.s / 2, f.y * H - f.s / 2, f.s, f.s);
+      ctx.globalAlpha = Math.min(1, (0.35 + 0.65 * (0.5 + 0.5 * Math.sin(t * 2.2 + f.p))) * (0.8 + 0.5 * rhythm.high * R));
+      const s = f.s * (1 + 0.5 * rhythm.beat * R);
+      ctx.drawImage(glow, f.x * W - s / 2, f.y * H - s / 2, s, s);
+    }
+
+    // Destellos que brotan de la copa del ramo en cada golpe.
+    if (pendingSparkles > 0) {
+      const ctm = svg.getScreenCTM();
+      if (ctm) {
+        const origin = new DOMPoint(500, 440).matrixTransform(ctm);
+        const spread = 260 * ctm.a;
+        for (; pendingSparkles > 0; pendingSparkles--) {
+          const ang = rand(-Math.PI * 0.95, -Math.PI * 0.05);
+          const dist = rand(0.3, 1) * spread;
+          sparkles.push({
+            x: origin.x + Math.cos(ang) * dist * 0.6,
+            y: origin.y + Math.sin(ang) * dist * 0.5,
+            vx: Math.cos(ang) * rand(20, 60),
+            vy: Math.sin(ang) * rand(30, 80),
+            size: rand(4, 9),
+            life: 1,
+          });
+        }
+      }
+      pendingSparkles = 0;
+    }
+    for (let k = sparkles.length - 1; k >= 0; k--) {
+      const sp = sparkles[k];
+      sp.life -= dt * 1.3;
+      if (sp.life <= 0) {
+        sparkles.splice(k, 1);
+        continue;
+      }
+      sp.x += sp.vx * dt;
+      sp.y += sp.vy * dt;
+      sp.vy += 25 * dt;
+      const r = sp.size * (0.4 + sp.life);
+      ctx.globalAlpha = sp.life;
+      ctx.fillStyle = "#fff3b0";
+      ctx.beginPath();
+      ctx.moveTo(sp.x, sp.y - r);
+      ctx.quadraticCurveTo(sp.x, sp.y, sp.x + r, sp.y);
+      ctx.quadraticCurveTo(sp.x, sp.y, sp.x, sp.y + r);
+      ctx.quadraticCurveTo(sp.x, sp.y, sp.x - r, sp.y);
+      ctx.quadraticCurveTo(sp.x, sp.y, sp.x, sp.y - r);
+      ctx.fill();
+      ctx.drawImage(glow, sp.x - r * 1.5, sp.y - r * 1.5, r * 3, r * 3);
     }
     ctx.globalCompositeOperation = "source-over";
 
@@ -547,7 +632,7 @@
       }
       ctx.fillStyle = "#ffcf40";
       for (const h of hearts) {
-        h.y -= h.vy * dt;
+        h.y -= h.vy * dt * (1 + rhythm.beat * R * 1.5);
         if (h.y < -30) spawnHeart(h);
         ctx.globalAlpha = fade * 0.55 * (0.6 + 0.4 * Math.sin(t * 2 + h.ph));
         heartPath(h.x + Math.sin(t + h.ph) * 12, h.y, h.s);
@@ -606,8 +691,109 @@
     musicBtn.setAttribute("aria-label", muted ? "Reproducir música" : "Pausar música");
   }
 
+  /* ---------------- Ritmo: análisis de la canción ---------------- */
+
+  const FALLBACK_BPM = 100;
+  const rhythm = {
+    bass: 0,
+    mid: 0,
+    high: 0,
+    beat: 0,
+    count: 0,
+    phase: 0,
+    phaseTarget: 0,
+    avg: 0.2,
+    lastBeat: -10,
+    energy: 0,
+    amount: 0,
+  };
+  const audio = { ctx: null, analyser: null, data: null };
+  let pendingSparkles = 0;
+
+  // Solo se conecta el analizador si el AudioContext arranca: conectado y suspendido, la canción quedaría muda.
+  async function connectAnalyser() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    if (audio.ctx) {
+      if (audio.ctx.state !== "running") audio.ctx.resume();
+      return;
+    }
+    const ctx = new AC();
+    if (ctx.state !== "running") {
+      await Promise.race([ctx.resume().catch(() => {}), new Promise((r) => setTimeout(r, 300))]);
+    }
+    if (ctx.state !== "running" || audio.ctx) {
+      ctx.close();
+      return;
+    }
+    const source = ctx.createMediaElementSource(song);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    analyser.smoothingTimeConstant = 0.55;
+    source.connect(analyser);
+    analyser.connect(ctx.destination);
+    audio.ctx = ctx;
+    audio.analyser = analyser;
+    audio.data = new Uint8Array(analyser.frequencyBinCount);
+  }
+
+  function onBeat(t) {
+    rhythm.beat = 1;
+    rhythm.count++;
+    rhythm.lastBeat = t;
+    rhythm.phaseTarget += Math.PI;
+    if (t > 10.5) pendingSparkles += 7;
+  }
+
+  function band(from, to) {
+    let sum = 0;
+    for (let i = from; i < to; i++) sum += audio.data[i];
+    return sum / ((to - from) * 255);
+  }
+
+  function updateRhythm(t, dt) {
+    const playing = !song.paused;
+    const period = 60 / FALLBACK_BPM;
+    const live = playing && audio.analyser && audio.ctx.state === "running";
+
+    if (live) {
+      audio.analyser.getByteFrequencyData(audio.data);
+      const bass = band(1, 6);
+      rhythm.bass = Math.max(bass, rhythm.bass * Math.exp(-dt * 6));
+      rhythm.mid = lerp(rhythm.mid, band(6, 48), 1 - Math.exp(-dt * 8));
+      rhythm.high = lerp(rhythm.high, band(48, 160) * 1.6, 1 - Math.exp(-dt * 10));
+      rhythm.avg = lerp(rhythm.avg, bass, 1 - Math.exp(-dt * 1.5));
+      const sinceBeat = t - rhythm.lastBeat;
+      if ((bass > rhythm.avg * 1.18 + 0.03 && bass > 0.25 && sinceBeat > 0.32) || sinceBeat > 1.3) onBeat(t);
+    } else if (playing) {
+      // Sin analizador (p. ej. antes de tocar la pantalla) se sigue un pulso fijo aproximado.
+      if (t - rhythm.lastBeat >= period) onBeat(t);
+      const ph = (t - rhythm.lastBeat) / period;
+      rhythm.bass = 0.3 + 0.45 * Math.exp(-ph * 4);
+      rhythm.mid = 0.4 + 0.1 * Math.sin(t * 3);
+      rhythm.high = 0.3 + 0.15 * Math.sin(t * 5.3);
+    } else {
+      const k = Math.exp(-dt * 2);
+      rhythm.bass *= k;
+      rhythm.mid *= k;
+      rhythm.high *= k;
+    }
+
+    rhythm.beat *= Math.exp(-dt * 5);
+    rhythm.phase += (rhythm.phaseTarget - rhythm.phase) * (1 - Math.exp(-dt * 7));
+    rhythm.energy = lerp(rhythm.energy, playing ? 1 : 0, 1 - Math.exp(-dt * 2));
+    rhythm.amount = lerp(0.35, 1, clamp01((t - 9.5) / 2)) * rhythm.energy;
+    document.documentElement.style.setProperty("--beat", (rhythm.beat * rhythm.amount).toFixed(3));
+  }
+
   function tryPlay() {
-    song.play().then(() => setMuted(false), () => setMuted(true));
+    song.play().then(
+      () => {
+        setMuted(false);
+        connectAnalyser();
+      },
+      () => setMuted(true)
+    );
   }
 
   function onFirstTouch(e) {
@@ -617,6 +803,10 @@
   }
 
   window.addEventListener("pointerdown", onFirstTouch);
+  window.addEventListener("pointerdown", () => song.paused || connectAnalyser());
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && audio.ctx && audio.ctx.state !== "running") audio.ctx.resume();
+  });
   musicBtn.addEventListener("click", () => {
     if (song.paused) tryPlay();
     else {
@@ -639,7 +829,8 @@
     const dt = Math.min(0.05, t - prev);
     prev = t;
 
-    for (const f of flowers) updateFlower(f, t);
+    updateRhythm(t, dt);
+    for (const f of flowers) updateFlower(f, t, dt);
     updateBouquet(t);
     drawSky(t, dt);
 
